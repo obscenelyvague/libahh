@@ -178,6 +178,7 @@ static void composite_destruct(void *value)
     CompositeHashValue *v = value;
     ass_free_bitmap(&v->bm);
     ass_free_bitmap(&v->bm_o);
+    ass_free_bitmap(&v->bm_o_k);
     ass_free_bitmap(&v->bm_s);
 }
 
