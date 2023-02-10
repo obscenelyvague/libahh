@@ -33,7 +33,7 @@ typedef uint64_t ass_hashcode;
 // cache values
 
 typedef struct {
-    Bitmap bm, bm_o, bm_s;
+    Bitmap bm, bm_o, bm_o_k, bm_s;
 } CompositeHashValue;
 
 typedef struct {
