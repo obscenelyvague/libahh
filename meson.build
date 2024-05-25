@@ -62,7 +62,7 @@ add_project_arguments(
 # Configuration
 
 check_functions = {
-  'string.h': ['strdup', 'strndup'],
+  'string.h': ['strdup', 'strndup', 'strchrnul'],
   'sched.h': ['sched_getaffinity'],
   'pthread.h': ['pthread_setname_np'],
 }

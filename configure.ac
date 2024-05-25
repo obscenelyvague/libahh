@@ -16,7 +16,7 @@ AM_PROG_AS
 AC_CHECK_HEADERS_ONCE([iconv.h sched.h stdatomic.h unistd.h windows.h])
 
 # Checks for library functions.
-AC_CHECK_FUNCS([sched_getaffinity strdup strndup pthread_setname_np])
+AC_CHECK_FUNCS([sched_getaffinity strdup strndup strchrnul pthread_setname_np])
 
 # Query configuration parameters and set their description
 AC_ARG_ENABLE([test], AS_HELP_STRING([--enable-test],
