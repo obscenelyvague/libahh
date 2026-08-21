@@ -28,6 +28,7 @@
 #include "ass_font.h"
 #include "ass_outline.h"
 #include "ass_cache.h"
+#include "ass_render.h"
 #include "ass_threading.h"
 
 // Always enable native-endian mode, since we don't care about cross-platform consistency of the hash
@@ -344,6 +345,44 @@ const CacheDesc glyph_metrics_cache_desc = {
     .construct_func = ass_glyph_metrics_construct,
     .key_size = sizeof(GlyphMetricsHashKey),
     .value_size = sizeof(FT_Glyph_Metrics)
+};
+
+
+// event render cache
+static bool event_render_key_move(void *dst, void *src)
+{
+    EventRenderHashKey *d = dst, *s = src;
+    if (!d)
+        return true;
+
+    *d = *s;
+    d->text.str = ass_copy_string(s->text);
+    return d->text.str;
+}
+
+static void event_render_key_destruct(void *key)
+{
+    EventRenderHashKey *k = key;
+    free((char *) k->text.str);
+}
+
+static void event_render_destruct(void *value)
+{
+    EventRenderHashValue *v = value;
+    ass_frame_unref(v->imgs);
+}
+
+size_t ass_event_render_construct(void *key, void *value, void *priv);
+
+const CacheDesc event_render_cache_desc = {
+    .hash_func = event_render_hash,
+    .compare_func = event_render_compare,
+    .key_move_func = event_render_key_move,
+    .key_destruct_func = event_render_key_destruct,
+    .construct_func = ass_event_render_construct,
+    .value_destruct_func = event_render_destruct,
+    .key_size = sizeof(EventRenderHashKey),
+    .value_size = sizeof(EventRenderHashValue)
 };
 
 
@@ -816,4 +855,9 @@ Cache *ass_bitmap_cache_create(void)
 Cache *ass_composite_cache_create(void)
 {
     return ass_cache_create(&composite_cache_desc);
+}
+
+Cache *ass_event_render_cache_create(void)
+{
+    return ass_cache_create(&event_render_cache_desc);
 }
