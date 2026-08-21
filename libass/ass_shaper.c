@@ -341,11 +341,24 @@ get_glyph_nominal(hb_font_t *font, void *font_data, hb_codepoint_t unicode,
                   hb_codepoint_t *glyph, void *user_data)
 {
     struct ass_shaper_metrics_data *metrics_priv = font_data;
-    FT_Face face = metrics_priv->hash_key.font->faces[metrics_priv->hash_key.face_index];
+    ASS_Font *ass_font = metrics_priv->hash_key.font;
+    FT_Face face = ass_font->faces[metrics_priv->hash_key.face_index];
 
-    *glyph = ass_font_index_magic(face, unicode);
-    if (*glyph)
-        *glyph = FT_Get_Char_Index(face, *glyph);
+    ass_font_lock(ass_font);
+
+    // the font cmap cache is usually already primed for this codepoint
+    // by ass_font_get_index() during shape run splitting
+    ASS_FontCmapEntry *ce = &ass_font->cmap_cache[ass_font_cmap_slot(unicode)];
+    if (ce->symbol == unicode && ce->face_index == metrics_priv->hash_key.face_index) {
+        *glyph = ce->glyph_index;
+    } else {
+        *glyph = ass_font_index_magic(face, unicode);
+        if (*glyph)
+            *glyph = FT_Get_Char_Index(face, *glyph);
+    }
+
+    ass_font_unlock(ass_font);
+
     if (!*glyph)
         return false;
 
@@ -359,11 +372,17 @@ get_glyph_variation(hb_font_t *font, void *font_data, hb_codepoint_t unicode,
                     hb_codepoint_t variation, hb_codepoint_t *glyph, void *user_data)
 {
     struct ass_shaper_metrics_data *metrics_priv = font_data;
-    FT_Face face = metrics_priv->hash_key.font->faces[metrics_priv->hash_key.face_index];
+    ASS_Font *ass_font = metrics_priv->hash_key.font;
+    FT_Face face = ass_font->faces[metrics_priv->hash_key.face_index];
+
+    ass_font_lock(ass_font);
 
     *glyph = ass_font_index_magic(face, unicode);
     if (*glyph)
         *glyph = FT_Face_GetCharVariantIndex(face, *glyph, variation);
+
+    ass_font_unlock(ass_font);
+
     if (!*glyph)
         return false;
 
@@ -856,11 +875,13 @@ static void shape_fribidi(ASS_Shaper *shaper, GlyphInfo *glyphs, size_t len)
     // update indexes
     for (i = 0; i < len; i++) {
         GlyphInfo *info = glyphs + i;
-        FT_Face face = info->font->faces[info->face_index];
         info->symbol = shaper->event_text[i];
+        ass_font_lock(info->font);
+        FT_Face face = info->font->faces[info->face_index];
         info->glyph_index = ass_font_index_magic(face, shaper->event_text[i]);
         if (info->glyph_index)
             info->glyph_index = FT_Get_Char_Index(face, info->glyph_index);
+        ass_font_unlock(info->font);
     }
 
     free(joins);
@@ -928,7 +949,8 @@ void ass_shaper_find_runs(ASS_Shaper *shaper, ASS_Renderer *render_priv,
     for (i = 0; i < len; i++) {
         GlyphInfo *info = glyphs + i;
         if (!info->drawing_text.str && !info->skip) {
-            // get font face and glyph index
+            // get font face and glyph index; this takes the font lock
+            // internally as needed
             ass_font_get_index(render_priv->fontselect, info->font,
                     info->symbol, &info->face_index, &info->glyph_index);
         }

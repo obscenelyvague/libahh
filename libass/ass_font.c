@@ -548,8 +548,14 @@ static int add_face(ASS_FontSelector *fontsel, ASS_Font *font, uint32_t ch)
         goto cleanup;
     }
 
+    ass_font_lock(font);
     atomic_store_explicit(&font->n_faces, n_faces + 1, memory_order_release);
     ret = n_faces;
+
+    // The set of faces changed, so previously cached lookups may now
+    // resolve differently (in particular, codepoints that used to miss).
+    memset(font->cmap_cache, 0, sizeof(font->cmap_cache));
+    ass_font_unlock(font);
 
 cleanup:
     ass_fontselect_unlock(fontsel);
@@ -578,6 +584,7 @@ size_t ass_font_construct(void *key, void *value, void *priv)
 
     font->ftlibrary = render_priv->ftlibrary;
     atomic_init(&font->n_faces, 0);
+    memset(font->cmap_cache, 0, sizeof(font->cmap_cache));
     font->desc.family = desc->family;
     font->desc.bold = desc->bold;
     font->desc.italic = desc->italic;
@@ -722,7 +729,9 @@ static void ass_glyph_italicize(FT_Face face)
  * \brief Get glyph and face index
  * Finds a face that has the requested codepoint and returns both face
  * and glyph index.
- * Must be called under lock.
+ * Callers must not hold the font lock: it is taken internally around short
+ * critical sections and released before adding a new face. This preserves
+ * the lock order fontselect -> font, which add_face relies on.
  */
 int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
                        uint32_t symbol, int *face_index, int *glyph_index)
@@ -745,6 +754,20 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
         return 0;
     }
 
+    // The number of faces this lookup is based on; an add_face() completing
+    // concurrently invalidates the cmap cache entry we would store below.
+    AtomicInt cache_gen = n_faces;
+
+    ass_font_lock(font);
+
+    ASS_FontCmapEntry *ce = &font->cmap_cache[ass_font_cmap_slot(symbol)];
+    if (ce->symbol == symbol) {
+        *face_index = ce->face_index;
+        *glyph_index = ce->glyph_index;
+        ass_font_unlock(font);
+        return 1;
+    }
+
     for (i = 0; i < n_faces && index == 0; ++i) {
         face = font->faces[i];
         index = ass_font_index_magic(face, symbol);
@@ -754,6 +777,8 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
             *face_index = i;
     }
 
+    ass_font_unlock(font);
+
     if (index == 0) {
         int face_idx;
         ass_msg(font->library, MSGL_INFO,
@@ -762,6 +787,8 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
                 font->desc.bold, font->desc.italic);
         face_idx = *face_index = add_face(fontsel, font, symbol);
         if (face_idx >= 0) {
+            ass_font_lock(font);
+            cache_gen = atomic_load_explicit(&font->n_faces, memory_order_relaxed);
             face = font->faces[face_idx];
             index = ass_font_index_magic(face, symbol);
             if (index)
@@ -780,7 +807,10 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
                 }
                 if (index == 0 && charmap)
                     FT_Set_Charmap(face, charmap);
+                else // The active charmap changed, clear cache.
+                    memset(font->cmap_cache, 0, sizeof(font->cmap_cache));
             }
+            ass_font_unlock(font);
             if (index == 0) {
                 ass_msg(font->library, MSGL_ERR,
                         "Glyph 0x%X not found in font for (%.*s, %d, %d)",
@@ -793,6 +823,16 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
     // FIXME: make sure we have a valid face_index. this is a HACK.
     *face_index  = FFMAX(*face_index, 0);
     *glyph_index = index;
+
+    // Don't cache a result if the face set changed while we were looking up
+    // the codepoint: the entry could shadow a glyph from a newly added face.
+    ass_font_lock(font);
+    if (atomic_load_explicit(&font->n_faces, memory_order_relaxed) == cache_gen) {
+        ce->symbol = symbol;
+        ce->face_index = *face_index;
+        ce->glyph_index = index;
+    }
+    ass_font_unlock(font);
 
     return 1;
 }
