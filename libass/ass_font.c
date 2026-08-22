@@ -768,6 +768,7 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
                 index = FT_Get_Char_Index(face, index);
             if (index == 0 && face->num_charmaps > 0) {
                 int i;
+                FT_CharMap charmap = face->charmap;
                 ass_msg(font->library, MSGL_WARN,
                     "Glyph 0x%X not found, broken font? Trying all charmaps", symbol);
                 for (i = 0; i < face->num_charmaps; i++) {
@@ -777,6 +778,8 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
                         index = FT_Get_Char_Index(face, index);
                     if (index) break;
                 }
+                if (index == 0 && charmap)
+                    FT_Set_Charmap(face, charmap);
             }
             if (index == 0) {
                 ass_msg(font->library, MSGL_ERR,
